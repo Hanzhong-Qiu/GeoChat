@@ -104,6 +104,24 @@ class TrainingArguments(transformers.TrainingArguments):
     lora_weight_path: str = ""
     lora_bias: str = "none"
     group_by_modality_length: bool = field(default=False)
+    # Soft labeling hyperparameters (ICCV 2025, Wang et al.)
+    soft_label_enable: bool = field(
+        default=False,
+        metadata={"help": "Enable soft labeling for numerical digit tokens (0-9)."}
+    )
+    soft_label_distribution: str = field(
+        default="triangular",
+        metadata={"help": "Soft label distribution type: 'triangular' or 'binomial'."}
+    )
+    soft_label_eta: float = field(
+        default=0.08,
+        metadata={"help": "Mixing coefficient eta for soft labels. "
+                  "Default: 0.08 (triangular), 0.05 (binomial)."}
+    )
+    soft_label_lambda: float = field(
+        default=2.0,
+        metadata={"help": "Balancing weight lambda for numerical token loss. Default: 2.0."}
+    )
 
 
 def maybe_zero_3(param, ignore_status=False, name=None):
@@ -799,6 +817,7 @@ def train():
             model = GeoChatLlamaForCausalLM.from_pretrained(
                 model_args.model_name_or_path,
                 cache_dir=training_args.cache_dir,
+                ignore_mismatched_sizes=True,
                 **bnb_model_from_pretrained_args
             )
     else:
@@ -908,6 +927,22 @@ def train():
         training_args.use_im_start_end = model_args.mm_use_im_start_end
         model.config.mm_use_im_patch_token = model_args.mm_use_im_patch_token
         model.initialize_vision_tokenizer(model_args, tokenizer=tokenizer)
+
+    # ---- Soft labeling setup ----
+    if training_args.soft_label_enable:
+        from geochat.train.soft_label_loss import build_digit_token_ids
+        digit_token_ids = build_digit_token_ids(tokenizer)
+        # Store soft labeling config on model.config so it's accessible in forward()
+        model.config.soft_label_enable = True
+        model.config.soft_label_distribution = training_args.soft_label_distribution
+        model.config.soft_label_eta = training_args.soft_label_eta
+        model.config.soft_label_lambda = training_args.soft_label_lambda
+        model.config.digit_token_ids = digit_token_ids
+        rank0_print(
+            f"[Soft Labeling] Enabled with distribution={training_args.soft_label_distribution}, "
+            f"eta={training_args.soft_label_eta}, lambda={training_args.soft_label_lambda}"
+        )
+        rank0_print(f"[Soft Labeling] Digit token IDs: {digit_token_ids}")
 
     if training_args.bits in [4, 8]:
         from peft.tuners.lora import LoraLayer

@@ -30,34 +30,35 @@ def eval_model(args):
     model_path = os.path.expanduser(args.model_path)
     model_name = get_model_name_from_path(model_path)
     tokenizer, model, image_processor, context_len = load_pretrained_model(args.model_path, args.model_base, model_name)
-    import pdb;pdb.set_trace()
-    # print(model)
-    questions=[]
-    questions = [json.loads(q) for q in open(os.path.expanduser(args.question_file), "r")]
 
-        
+    # Load questions (JSON array format)
+    with open(os.path.expanduser(args.question_file), "r") as f:
+        questions = json.load(f)
+
+
     questions = get_chunk(questions, args.num_chunks, args.chunk_idx)
     answers_file = os.path.expanduser(args.answers_file)
     os.makedirs(os.path.dirname(answers_file), exist_ok=True)
-    
+
     ans_file = open(answers_file, "w")
-    
+
     for i in tqdm(range(0,len(questions),args.batch_size)):
         input_batch=[]
         input_image_batch=[]
         count=i
-        image_folder=[]     
+        image_folder=[]
         batch_end = min(i + args.batch_size, len(questions))
 
-             
-        for j in range(i,batch_end):
-            image_file=questions[j]['image_id']+'.png'
 
+        for j in range(i,batch_end):
+            image_file=questions[j]['image_id']
+
+            qs_text = questions[j]['question']
             if questions[j]['type']=='ref':
-                qs="[refer] Give me the location of <p> " + qs+" </p>"
+                qs="[refer] Give me the location of <p> " + qs_text + " </p>"
             else:
-                qs="[grounding]" + qs
-            
+                qs="[grounding]" + qs_text
+
             if model.config.mm_use_im_start_end:
                 qs = DEFAULT_IM_START_TOKEN + DEFAULT_IMAGE_TOKEN + DEFAULT_IM_END_TOKEN + '\n' + qs
             else:
@@ -100,7 +101,7 @@ def eval_model(args):
             output = output.strip()
 
             ans_id = shortuuid.uuid()
-            
+
             ans_file.write(json.dumps({
 
                                     "question_id": questions[count]["question_id"],
@@ -111,8 +112,11 @@ def eval_model(args):
                                     "type": questions[count]['type'],
                                     "dataset": questions[count]['dataset'],
                                     "obj_ids": questions[count]['obj_ids'],
-                                    "size_group": questions[count]['size_group'],                            
-                                    
+                                    "size_group": questions[count]['size_group'],
+                                    # Fields needed by compute_metrics.py
+                                    "unique": questions[count].get('unique', None),
+                                    "obj_corner": questions[count].get('obj_corner', None),
+                                    "obj_cls": questions[count].get('obj_cls', None),
                                     }) + "\n")
             count=count+1
             ans_file.flush()

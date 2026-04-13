@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Training artifacts
+wandb/
+experiments/logs/
+*.bin
+*.safetensors
+*.pth
+*.pt
+*.ckpt
+checkpoints/
+
+# Editor / IDE
+.vscode/
+.idea/
+.claude/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (large, should be downloaded separately)
+data/
+images/
+
+# But keep the VRSBench_EVAL JSON files we explicitly commit
+!experiments/vrsbench_eval/ground_truth/VRSBench_EVAL_*.json
+!experiments/vrsbench_eval/predictions/*.jsonl

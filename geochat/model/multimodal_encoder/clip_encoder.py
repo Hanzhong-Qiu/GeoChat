@@ -52,12 +52,15 @@ class CLIPVisionTower(nn.Module):
  
             # Perform interpolation.
             # (1, hidden_dim, seq_l_1d, seq_l_1d) -> (1, hidden_dim, new_seq_l_1d, new_seq_l_1d)
+            # Cast to float32 for bicubic interpolation (not supported for Half on CPU),
+            # then cast back to the original dtype.
+            orig_dtype = pos_embedding_img.dtype
             new_pos_embedding_img = nn.functional.interpolate(
-                pos_embedding_img,
+                pos_embedding_img.float(),
                 size=new_seq_length_1d,
                 mode='bicubic',
                 align_corners=True,
-            )
+            ).to(orig_dtype)
  
             # (1, hidden_dim, new_seq_l_1d, new_seq_l_1d) -> (1, hidden_dim, new_seq_length)
             new_pos_embedding_img = new_pos_embedding_img.reshape(1, hidden_dim, new_seq_length)

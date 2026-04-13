@@ -47,7 +47,12 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             lora_cfg_pretrained = AutoConfig.from_pretrained(model_path)
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
             print('Loading Geochat from base model...')
-            model = GeoChatLlamaForCausalLM.from_pretrained(model_base, low_cpu_mem_usage=True, config=lora_cfg_pretrained, **kwargs)
+            # Strip device_map to avoid meta tensor issues with ignore_mismatched_sizes.
+            # When device_map is set, accelerate creates model on meta device first;
+            # mismatched-size params (e.g. CLIP pos_embed 577->1297) stay as meta tensors
+            # and crash during dispatch. Without device_map, model loads fully on CPU.
+            lora_load_kwargs = {k: v for k, v in kwargs.items() if k != 'device_map'}
+            model = GeoChatLlamaForCausalLM.from_pretrained(model_base, config=lora_cfg_pretrained, ignore_mismatched_sizes=True, **lora_load_kwargs)
             token_num, tokem_dim = model.lm_head.out_features, model.lm_head.in_features
             if model.lm_head.weight.shape[0] != token_num:
                 model.lm_head.weight = torch.nn.Parameter(torch.empty(token_num, tokem_dim, device=model.device, dtype=model.dtype))

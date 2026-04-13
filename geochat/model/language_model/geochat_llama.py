@@ -17,6 +17,7 @@ from typing import List, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.nn import CrossEntropyLoss
 
 from transformers import AutoConfig, AutoModelForCausalLM, \
@@ -52,6 +53,52 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
 
     def get_model(self):
         return self.model
+
+    def _get_soft_label_matrix(self, device, dtype):
+        """Lazily build and cache the soft label matrix on first use.
+
+        The matrix is cached and only re-created if device/dtype change,
+        which avoids redundant .to() calls on every forward pass.
+        """
+        needs_rebuild = (
+            not hasattr(self, '_soft_label_matrix')
+            or self._soft_label_matrix is None
+        )
+        needs_move = (
+            not needs_rebuild
+            and (self._soft_label_matrix.device != device
+                 or self._soft_label_matrix.dtype != dtype)
+        )
+
+        if needs_rebuild:
+            from geochat.train.soft_label_loss import (
+                build_triangular_soft_matrix,
+                build_binomial_soft_matrix,
+            )
+
+            digit_token_ids = self.config.digit_token_ids
+            dist_type = getattr(self.config, 'soft_label_distribution', 'triangular')
+            eta = getattr(self.config, 'soft_label_eta', 0.08)
+
+            if dist_type == 'triangular':
+                matrix = build_triangular_soft_matrix(
+                    digit_token_ids, self.config.vocab_size, eta
+                )
+            elif dist_type == 'binomial':
+                matrix = build_binomial_soft_matrix(
+                    digit_token_ids, self.config.vocab_size, eta
+                )
+            else:
+                raise ValueError(f"Unknown soft label distribution: {dist_type}")
+
+            self._soft_label_matrix = matrix.to(device=device, dtype=dtype)
+
+        elif needs_move:
+            self._soft_label_matrix = self._soft_label_matrix.to(
+                device=device, dtype=dtype
+            )
+
+        return self._soft_label_matrix
 
     def forward(
         self,
@@ -95,12 +142,28 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
             shift_logits = logits[..., :-1, :].contiguous()
             shift_labels = labels[..., 1:].contiguous()
             # Flatten the tokens
-            loss_fct = CrossEntropyLoss()
             shift_logits = shift_logits.view(-1, self.config.vocab_size)
             shift_labels = shift_labels.view(-1)
             # Enable model/pipeline parallelism
             shift_labels = shift_labels.to(shift_logits.device)
-            loss = loss_fct(shift_logits, shift_labels)
+
+            if getattr(self.config, 'soft_label_enable', False) and self.training:
+                # Soft labeling: use distance-aware soft targets for digit tokens
+                from geochat.train.soft_label_loss import compute_soft_label_loss
+                soft_matrix = self._get_soft_label_matrix(
+                    device=shift_logits.device, dtype=shift_logits.dtype
+                )
+                loss = compute_soft_label_loss(
+                    shift_logits,
+                    shift_labels,
+                    soft_matrix,
+                    self.config.digit_token_ids,
+                    lambda_weight=getattr(self.config, 'soft_label_lambda', 2.0),
+                )
+            else:
+                # Standard hard-label cross-entropy
+                loss_fct = CrossEntropyLoss()
+                loss = loss_fct(shift_logits, shift_labels)
 
         if not return_dict:
             output = (logits,) + outputs[1:]
