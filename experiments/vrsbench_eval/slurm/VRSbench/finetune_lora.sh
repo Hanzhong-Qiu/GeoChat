@@ -20,7 +20,7 @@ mamba activate geochat
 module load cuda/11.8.0-rgxs
 export LD_LIBRARY_PATH=$CUDA_HOME/lib64:$CUDA_HOME/lib:$LD_LIBRARY_PATH
 export HF_HUB_OFFLINE=1
-export WANDB_API_KEY="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"
+# export WANDB_API_KEY="..."  # set in your shell, do not commit
 #export HF_HOME=/user/work/dw22963/hf_cache/hub/models--openai--clip-vit-large-patch14-336/snapshots/ce19dc912ca5cd21c8a653c79e251e808ccabcd1/
 
 cd /user/work/$USER/GeoChat/

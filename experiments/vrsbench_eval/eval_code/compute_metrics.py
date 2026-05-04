@@ -1,92 +1,110 @@
-import re
+"""Compute VRSBench visual grounding metrics.
+
+Usage:
+    python compute_metrics.py <predictions.jsonl>
+    python compute_metrics.py <predictions.jsonl> --tag <label>
+
+For each input file prints a TSV table with one row per subset:
+    tag  split         N      Acc@0.3 Acc@0.5 Acc@0.7 Acc@0.9 meanIoU cumIoU
+Makes batch aggregation across many model runs trivial: just run this on
+each predictions.jsonl and concatenate the output.
+"""
+import argparse
 import json
+import re
+import sys
+
 import numpy as np
-import os
+from eval_utils import computeIoU
 
-# 确保 eval_utils.py 和当前脚本在同一个目录下
-from eval_utils import *
+THRESHOLDS = [0.3, 0.5, 0.7, 0.9]
+SPLITS = {
+    "all":        (1, 0, True, False),
+    "unique":     (1, True),
+    "non_unique": (0, False),
+}
 
-print("开始计算 Visual Grounding 评测指标...")
 
-# 【核心修改 1】：直接指向你生成的预测结果文件
-data_path = '/user/home/dw22963/work/GeoChat/experiements/VRSBench_eval/predictions/vg_soft_grounding_predictions.jsonl'
+def parse_bbox(text):
+    ints = re.findall(r"\d+", text or "")
+    if len(ints) < 4:
+        return None
+    return [int(ints[0]), int(ints[1]), int(ints[2]), int(ints[3])]
 
-thres_list = [0.5, 0.7]
-count = np.zeros(len(thres_list))
 
-cumI = 0
-cumU = 0
-mean_IoU = 0
+def evaluate_split(items, allowed_unique):
+    """Return a dict of metrics on the subset whose `unique` is in allowed_unique."""
+    counts = np.zeros(len(THRESHOLDS))
+    cumI = 0.0
+    cumU = 0.0
+    mean_iou = 0.0
+    total = 0
 
-total_count = 0
-valid_count = 0
-
-use_size_group = False
-size_list = ['small', 'medium', 'large']
-# 【核心修改 2】：兼容布尔值 True/False (你的数据里 unique 是 true)
-#unique_check = [1, 0, True, False] 
-#unique_check = [1, True]  # 只保留 Unique 的题目
-unique_check = [0, False]  # 只保留 Non-unique 的题目
-
-with open(data_path, 'r') as file:
-    for line in file:
-        item = json.loads(line.strip())
-        img_id = item.get('image_id', 'unknown')
-        
-        # 【核心修改 3】：修复原作者键名不一致的 bug
-        is_unique = item.get('unique', item.get('is_unique', True))
-        
-        if use_size_group:
-            obj_size = item.get('size_group', 'medium')
-            obj_size = 'medium' if obj_size == '' else obj_size
-        else:
-            obj_size = 'medium'
-
-        if not (is_unique in unique_check and (obj_size in size_list)):
+    for item in items:
+        is_unique = item.get("unique", item.get("is_unique", True))
+        if is_unique not in allowed_unique:
             continue
-        
-        total_count += 1
 
-        # 提取真实的坐标
-        integers = re.findall(r'\d+', item.get('ground_truth', ''))
-        if len(integers) < 4:
+        gt = parse_bbox(item.get("ground_truth", ""))
+        if gt is None:
             continue
-        gt_bbox = np.array([int(num) for num in integers])[np.newaxis,:]
-        
-        # 提取模型预测的坐标
-        integers = re.findall(r'\d+', item.get('answer', ''))
-        if len(integers) < 4:
-            pred_bbox = np.array([0, 0, 0, 0])[np.newaxis,:] # 防止模型输出乱码导致报错
-        else:
-            pred_bbox = np.array([int(num) for num in integers])[np.newaxis,:]
-        
+        total += 1
+
+        pred = parse_bbox(item.get("answer", ""))
+        if pred is None:
+            pred = [0, 0, 0, 0]
+
         try:
-            # 走常规的水平框 HBB 评测逻辑
-            gt_bbox_list = gt_bbox[0,:4].tolist()
-            pred_bbox_list = pred_bbox[0,:4].tolist()
-            
-            # 调用 eval_utils.py 里的 computeIoU 函数
-            iou_score, I, U = computeIoU(gt_bbox_list, pred_bbox_list, return_iou=True)
-            
-            mean_IoU += iou_score
-            cumI += I
-            cumU += U
-        
-            for ii, thres in enumerate(thres_list):
-                if iou_score >= thres:
-                    count[ii] += 1
-            valid_count += 1
+            iou_score, I, U = computeIoU(gt, pred, return_iou=True)
+        except Exception:
+            continue
 
-        except Exception as e:
-            print(f"Error evaluating {img_id}: {e}")
-            print('invalid output', img_id, pred_bbox, gt_bbox, flush=True)
+        mean_iou += iou_score
+        cumI += I
+        cumU += U
+        for k, thres in enumerate(THRESHOLDS):
+            if iou_score >= thres:
+                counts[k] += 1
 
-print('-----------------------------------------')
-print('number of total/valid samples:', total_count, valid_count)
-for ii, thres in enumerate(thres_list):
-    print(f'Acc at iou_{thres}: {(count[ii] / total_count * 100):.2f}%', flush=True)
+    if total == 0:
+        return None
 
-if cumU > 0:
-    print(f'meanIoU: {(mean_IoU/total_count * 100):.2f}%, cumIoU: {(cumI/cumU * 100):.2f}%', flush=True)
-else:
-    print("Failed to calculate IoU.")
+    out = {"N": total}
+    for k, thres in enumerate(THRESHOLDS):
+        out[f"Acc@{thres}"] = 100.0 * counts[k] / total
+    out["meanIoU"] = 100.0 * mean_iou / total
+    out["cumIoU"] = 100.0 * cumI / cumU if cumU > 0 else float("nan")
+    return out
+
+
+def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("data", help="Path to predictions.jsonl")
+    parser.add_argument("--tag", default=None, help="Label for this run in the output table (default: basename)")
+    parser.add_argument("--header", action="store_true", help="Print column header row")
+    args = parser.parse_args()
+
+    tag = args.tag or args.data.split("/")[-1].replace(".jsonl", "")
+
+    with open(args.data) as f:
+        items = [json.loads(line) for line in f]
+
+    cols = ["tag", "split", "N"] + [f"Acc@{t}" for t in THRESHOLDS] + ["meanIoU", "cumIoU"]
+    if args.header:
+        print("\t".join(cols))
+
+    for split_name, allowed in SPLITS.items():
+        metrics = evaluate_split(items, allowed)
+        if metrics is None:
+            print(f"{tag}\t{split_name}\t0\t-\t-\t-\t-\t-\t-")
+            continue
+        row = [tag, split_name, str(metrics["N"])]
+        for t in THRESHOLDS:
+            row.append(f"{metrics[f'Acc@{t}']:.2f}")
+        row.append(f"{metrics['meanIoU']:.2f}")
+        row.append(f"{metrics['cumIoU']:.2f}")
+        print("\t".join(row))
+
+
+if __name__ == "__main__":
+    main()

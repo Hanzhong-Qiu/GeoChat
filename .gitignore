@@ -37,3 +37,15 @@ images/
 # But keep the VRSBench_EVAL JSON files we explicitly commit
 !experiments/vrsbench_eval/ground_truth/VRSBench_EVAL_*.json
 !experiments/vrsbench_eval/predictions/*.jsonl
+
+# Eval predictions (large jsonl files, regeneratable)
+experiments/vrsbench_eval/predictions/
+experiments/vrsbench_eval/demo_visualizations/
+
+# Personal/scratch
+dissertation/
+core
+tea_debug.log
+
+# Memory and plan files (Claude Code session artefacts)
+memory/

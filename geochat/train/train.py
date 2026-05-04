@@ -111,12 +111,13 @@ class TrainingArguments(transformers.TrainingArguments):
     )
     soft_label_distribution: str = field(
         default="triangular",
-        metadata={"help": "Soft label distribution type: 'triangular' or 'binomial'."}
+        metadata={"help": "Soft label distribution: 'triangular', 'binomial', "
+                  "'poisson', or 'uniform' (= label smoothing, negative control)."}
     )
     soft_label_eta: float = field(
         default=0.08,
-        metadata={"help": "Mixing coefficient eta for soft labels. "
-                  "Default: 0.08 (triangular), 0.05 (binomial)."}
+        metadata={"help": "Mixing coefficient eta for soft labels. Paper optima: "
+                  "0.08 (triangular), 0.05 (binomial), 0.02 (poisson), 0.05 (uniform)."}
     )
     soft_label_lambda: float = field(
         default=2.0,

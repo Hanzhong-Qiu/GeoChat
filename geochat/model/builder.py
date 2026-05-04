@@ -113,7 +113,11 @@ def load_pretrained_model(model_path, model_base, model_name, load_8bit=False, l
             # PEFT model
             from peft import PeftModel
             tokenizer = AutoTokenizer.from_pretrained(model_base, use_fast=False)
-            model = AutoModelForCausalLM.from_pretrained(model_base, torch_dtype=torch.float16, low_cpu_mem_usage=True, device_map="auto")
+            # Avoid `low_cpu_mem_usage=True` and `device_map="auto"` when mismatched
+            # weights are allowed: accelerate would place the newly-initialized CLIP
+            # position_embedding (577 -> 1297 interpolated at PeftModel load) on the
+            # meta device and then fail to .to(device) it. Load fully on CPU instead.
+            model = AutoModelForCausalLM.from_pretrained(model_base, torch_dtype=torch.float16, ignore_mismatched_sizes=True)
             print(f"Loading LoRA weights from {model_path}")
             model = PeftModel.from_pretrained(model, model_path)
             print(f"Merging weights")

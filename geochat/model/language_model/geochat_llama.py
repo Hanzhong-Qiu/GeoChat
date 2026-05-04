@@ -74,6 +74,8 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
             from geochat.train.soft_label_loss import (
                 build_triangular_soft_matrix,
                 build_binomial_soft_matrix,
+                build_poisson_soft_matrix,
+                build_uniform_soft_matrix,
             )
 
             digit_token_ids = self.config.digit_token_ids
@@ -86,6 +88,14 @@ class GeoChatLlamaForCausalLM(LlamaForCausalLM, GeoChatMetaForCausalLM):
                 )
             elif dist_type == 'binomial':
                 matrix = build_binomial_soft_matrix(
+                    digit_token_ids, self.config.vocab_size, eta
+                )
+            elif dist_type == 'poisson':
+                matrix = build_poisson_soft_matrix(
+                    digit_token_ids, self.config.vocab_size, eta
+                )
+            elif dist_type == 'uniform':
+                matrix = build_uniform_soft_matrix(
                     digit_token_ids, self.config.vocab_size, eta
                 )
             else:

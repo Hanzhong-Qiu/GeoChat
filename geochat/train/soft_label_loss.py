@@ -5,13 +5,14 @@ Implements the method from:
 "Enhancing Numerical Prediction of MLLMs with Soft Labeling" (ICCV 2025, Wang et al.)
 
 Key equation: q^{SL}(t) = (1 - eta) * delta(t) + eta * psi(t)
-where psi is a distance-aware distribution (triangular or binomial) over digit tokens {0,...,9}.
+where psi is a distance-aware distribution over digit tokens {0,...,9}.
+Supported distributions: triangular, binomial, poisson, uniform.
 
 Combined loss:
   L = (1 / (N_r + N_n)) * [ sum_regular CE(hard) + lambda * sum_numerical CE(soft) ]
 """
 
-from math import comb
+from math import comb, exp, factorial
 
 import torch
 import torch.nn.functional as F
@@ -132,6 +133,74 @@ def build_binomial_soft_matrix(digit_token_ids, vocab_size, eta=0.05):
         for k in range(10):
             row[digit_token_ids[k]] += eta * weights[k].item()
 
+        soft_matrix[t] = row
+
+    return soft_matrix
+
+
+def build_poisson_soft_matrix(digit_token_ids, vocab_size, eta=0.02):
+    """
+    Pre-compute a [10, vocab_size] soft label matrix using a Poisson distribution.
+
+    Following Beckham & Pal (2017), for target digit t the distribution is
+    Poisson with rate lambda_t = max(t, 0.5) so the mode stays near t and the
+    degenerate t=0 case does not collapse:
+        psi(k | t) = (lambda_t^k * exp(-lambda_t)) / k!,  k in {0,...,9}
+    After computing psi for k=0..9 we renormalise so the sum equals 1.
+
+    Args:
+        digit_token_ids: List of 10 token IDs for digits 0-9.
+        vocab_size: Total vocabulary size.
+        eta: Mixing coefficient in [0, 1]. Default 0.02 (paper recommendation).
+
+    Returns:
+        Tensor: Shape [10, vocab_size]. Row i = soft target when true digit is i.
+    """
+    soft_matrix = torch.zeros(10, vocab_size)
+
+    for t in range(10):
+        lam = max(float(t), 0.5)  # avoid lambda=0 which gives degenerate PMF
+        weights = torch.zeros(10)
+        for k in range(10):
+            weights[k] = (lam ** k) * exp(-lam) / factorial(k)
+        # Renormalise: truncating the PMF at k=9 loses mass for large lam
+        weights = weights / weights.sum()
+
+        row = torch.zeros(vocab_size)
+        row[digit_token_ids[t]] = 1.0 - eta
+        for k in range(10):
+            row[digit_token_ids[k]] += eta * weights[k].item()
+
+        soft_matrix[t] = row
+
+    return soft_matrix
+
+
+def build_uniform_soft_matrix(digit_token_ids, vocab_size, eta=0.05):
+    """
+    Pre-compute a [10, vocab_size] soft label matrix using a uniform distribution
+    over the 10 digit tokens. This is equivalent to classical label smoothing
+    restricted to the digit vocabulary, used in the paper as a *negative*
+    control (Table 4: performs worst because it discards distance information).
+
+        psi(k | t) = 1 / 10  for all k in {0,...,9}
+
+    Args:
+        digit_token_ids: List of 10 token IDs for digits 0-9.
+        vocab_size: Total vocabulary size.
+        eta: Mixing coefficient in [0, 1]. Default 0.05 (paper recommendation).
+
+    Returns:
+        Tensor: Shape [10, vocab_size]. Row i = soft target when true digit is i.
+    """
+    soft_matrix = torch.zeros(10, vocab_size)
+    uniform_weight = 1.0 / 10.0
+
+    for t in range(10):
+        row = torch.zeros(vocab_size)
+        row[digit_token_ids[t]] = 1.0 - eta
+        for k in range(10):
+            row[digit_token_ids[k]] += eta * uniform_weight
         soft_matrix[t] = row
 
     return soft_matrix
